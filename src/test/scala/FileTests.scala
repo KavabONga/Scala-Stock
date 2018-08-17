@@ -2,7 +2,7 @@ import ClientHandler._
 import Operation._
 import OrderExecutor.OrderExecutor
 
-object Main extends App{
+object Tester extends App{
   val path = "C:/Users/mitya/Documents/Git_workspace/Scala-Stock/src/test/cases/"
   var clientLines = scala.io.Source.fromFile(path + "clients.txt").getLines.toList
   val clients = ClientParser.parseLines(clientLines, line => {

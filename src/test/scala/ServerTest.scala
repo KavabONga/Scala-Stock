@@ -61,29 +61,29 @@ object Main extends App{
   implicit val executionContext = system.dispatcher
   var ex = new OrderExecutor(List())
   val route: Route =
-  pathPrefix("addClient") {
-    parameterMap { m =>
-      val addTry = RequestParseHelper.tryToClient(m).flatMap(client => {
-        Try({
-          ex = ex.addClient(client)
-          client
+    pathPrefix("addClient") {
+      parameterMap { m =>
+        val addTry = RequestParseHelper.tryToClient(m).flatMap(client => {
+          Try({
+            ex = ex.addClient(client)
+            client
+          })
         })
-      })
-      addTry match {
-        case Success(client) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Client with name ${client.name} and balance ${client.balance} added"))
-        case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
-      }
-    }
-  } ~
-    pathPrefix("getClient") {
-      parameter('name) { name =>
-        val tryClient = Try(ex.getClient(name))
-        tryClient match {
-          case Success(client) => complete(HttpEntity(ContentTypes.`application/json`, ObjectSerializer.clientToJson(client)))
+        addTry match {
+          case Success(client) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"Client with name ${client.name} and balance ${client.balance} added"))
           case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
         }
       }
     } ~
+      pathPrefix("getClient") {
+        parameter('name) { name =>
+          val tryClient = Try(ex.getClient(name))
+          tryClient match {
+            case Success(client) => complete(HttpEntity(ContentTypes.`application/json`, ObjectSerializer.clientToJson(client)))
+            case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
+          }
+        }
+      } ~
       pathPrefix("sell") {
         parameterMap { m =>
           val sellTry = RequestParseHelper.tryToSelling(m).flatMap(s => {
@@ -98,26 +98,26 @@ object Main extends App{
           }
         }
       } ~
-        pathPrefix("buy") {
-          parameterMap { m =>
-            val buyTry = RequestParseHelper.tryToPurchase(m).flatMap(s => {
-              Try({
-                ex = ex.request(s)
-                s
-              })
+      pathPrefix("buy") {
+        parameterMap { m =>
+          val buyTry = RequestParseHelper.tryToPurchase(m).flatMap(s => {
+            Try({
+              ex = ex.request(s)
+              s
             })
-            buyTry match {
-              case Success(purchase) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"${purchase.name} successfully published his purchase request"))
-              case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
-            }
+          })
+          buyTry match {
+            case Success(purchase) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"${purchase.name} successfully published his purchase request"))
+            case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
           }
-        } ~
-          pathPrefix("getRequestQueue") {
-          complete(ex.getRequestQueue().mkString(",\n"))
-        } ~
-            pathPrefix("getClients") {
-              complete(ex.getClients.mkString(",\n"))
-            }
+        }
+      } ~
+      pathPrefix("getRequestQueue") {
+        complete(ex.getRequestQueue().mkString(",\n"))
+      } ~
+      pathPrefix("getClients") {
+        complete(ex.getClients.mkString(",\n"))
+      }
   val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 
   println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")
