@@ -28,12 +28,11 @@ object ServerMain extends App{
       val addTry = RequestParser.tryToClient(m).flatMap(client => {
         Try({
           ex = ex.addClient(client)
-          client
         })
       })
       addTry match {
-        case Success(client) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, ObjectsToJson.success))
-        case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
+        case Success(_) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success))
+        case Failure(exc) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
       }
     }
   } ~
@@ -42,7 +41,7 @@ object ServerMain extends App{
         val tryClient = Try(ex.getClient(name))
         tryClient match {
           case Success(client) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.clientToJson(client)))
-          case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
+          case Failure(exc) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
         }
       }
     } ~
@@ -51,12 +50,11 @@ object ServerMain extends App{
           val sellTry = RequestParser.tryToSelling(m).flatMap(s => {
             Try({
               ex = ex.request(s)
-              s
             })
           })
           sellTry match {
-            case Success(selling) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"${selling.name} successfully published his selling request"))
-            case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
+            case Success(_) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success))
+            case Failure(exc) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
           }
         }
       } ~
@@ -65,21 +63,20 @@ object ServerMain extends App{
             val buyTry = RequestParser.tryToPurchase(m).flatMap(s => {
               Try({
                 ex = ex.request(s)
-                s
               })
             })
             buyTry match {
-              case Success(purchase) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, s"${purchase.name} successfully published his purchase request"))
-              case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
+              case Success(_) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success))
+              case Failure(exc) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
             }
           }
         } ~
           pathPrefix("getRequestQueue") {
-          complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.operationsToJson(ex.getRequestQueue())))
-        } ~
+            complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.operationsToJson(ex.getRequestQueue())))
+          } ~
             pathPrefix("getClients") {
-              complete(ex.getClients.mkString(",\n"))
-            }
+            complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.clientsToJson(ex.getClients)))
+          }
   val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)
 
   println(s"Server online at http://localhost:8080/\nPress RETURN to stop...")

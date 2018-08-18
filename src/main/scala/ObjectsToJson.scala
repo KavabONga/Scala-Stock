@@ -10,27 +10,27 @@ import org.json4s.jackson.JsonMethods.{compact, render, pretty}
 import org.json4s.JsonDSL._
 
 object ObjectsToJson {
-  def error(exc : Exception) =
+  def error(exc : Throwable) =
     pretty(render(("successful" -> false) ~ ("error" -> exc.getMessage)))
   def success =
     pretty(render("success" -> true))
-  def clientToJson(client : ClientHandler): String = {
+  private def packClient(client : ClientHandler) = {
     val currenciesStr = client.currencies.mapValues(_.toString).toList
-    val serialized =
-      ("name" -> client.name)~
+    ("name" -> client.name)~
       ( "balance" -> client.balance.toString)~
-        ("currencies" -> currenciesStr)
-    pretty(render(serialized))
+      ("currencies" -> currenciesStr)
     
   }
+  def clientToJson(client : ClientHandler) = pretty(render(packClient(client)))
+  def clientsToJson(clients : List[ClientHandler]) = pretty(render(clients.map(packClient)))
   private def sellBuyPack(name : String, cur : String, count : Int, price : Double) =
     ("name"->name)~("currency"->cur)~("count"->count)~("price"->price)
   private def operationPack(oper : Operation):JValue =
     oper match {
       case Selling(name, cur, count, price) =>
-        ("type" -> "Selling") ~ ( "operation" -> sellBuyPack(name, cur, count, price))
+        ("type" -> "Selling") ~ ( "parameters" -> sellBuyPack(name, cur, count, price))
       case Purchase(name, cur, count, price) =>
-        ("type" -> "Selling") ~ ( "operation" -> sellBuyPack(name, cur, count, price))
+        ("type" -> "Selling") ~ ( "parameters" -> sellBuyPack(name, cur, count, price))
       case _ =>
         "type" -> "error"
     }
