@@ -14,45 +14,9 @@ import org.json4s.jackson.{Json, JsonMethods}
 import scala.io.StdIn
 import scala.util._
 import OrderExecutor.OrderExecutor
+import serializer.ObjectsToJson
 
-object ObjectSerializer {
-  def mapToPretty(m:Map[String, String]) = JsonMethods.pretty(m)
-  def clientToJson(client : ClientHandler): String = {
-    def serialized = Map("name" -> client.name, "balance" -> client.balance.toString, "currencies" -> mapToPretty(client.currencies.mapValues(_.toString)))
-    mapToPretty(serialized)
-  }
-}
 
-object RequestParseHelper {
-  def tryToClient(m : Map[String, String]) : Try[ClientHandler] =
-    Try({
-      new ClientHandler(
-        m("name"),
-        m.get("balance").map(_.toDouble).getOrElse(0.0),
-        (m - "name" - "balance").mapValues(_.toInt)
-      )
-    })
-  def tryToSelling(m : Map[String, String]) : Try[Selling] = {
-    Try({
-      Selling(
-        m("name"),
-        m("currency"),
-        m.get("count").map(_.toInt).get,
-        m.get("price").map(_.toDouble).get
-      )
-    })
-  }
-  def tryToPurchase(m : Map[String, String]) : Try[Purchase] = {
-    Try({
-      Purchase(
-        m("name"),
-        m("currency"),
-        m.get("count").map(_.toInt).get,
-        m.get("price").map(_.toDouble).get
-      )
-    })
-  }
-}
 
 object Main extends App{
   implicit val system = ActorSystem("my-system")
@@ -63,7 +27,7 @@ object Main extends App{
   val route: Route =
     pathPrefix("addClient") {
       parameterMap { m =>
-        val addTry = RequestParseHelper.tryToClient(m).flatMap(client => {
+        val addTry = RequestParser.tryToClient(m).flatMap(client => {
           Try({
             ex = ex.addClient(client)
             client
@@ -79,14 +43,14 @@ object Main extends App{
         parameter('name) { name =>
           val tryClient = Try(ex.getClient(name))
           tryClient match {
-            case Success(client) => complete(HttpEntity(ContentTypes.`application/json`, ObjectSerializer.clientToJson(client)))
+            case Success(client) => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.clientToJson(client)))
             case Failure(exc) => complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, exc.getMessage))
           }
         }
       } ~
       pathPrefix("sell") {
         parameterMap { m =>
-          val sellTry = RequestParseHelper.tryToSelling(m).flatMap(s => {
+          val sellTry = RequestParser.tryToSelling(m).flatMap(s => {
             Try({
               ex = ex.request(s)
               s
@@ -100,7 +64,7 @@ object Main extends App{
       } ~
       pathPrefix("buy") {
         parameterMap { m =>
-          val buyTry = RequestParseHelper.tryToPurchase(m).flatMap(s => {
+          val buyTry = RequestParser.tryToPurchase(m).flatMap(s => {
             Try({
               ex = ex.request(s)
               s
@@ -113,7 +77,7 @@ object Main extends App{
         }
       } ~
       pathPrefix("getRequestQueue") {
-        complete(ex.getRequestQueue().mkString(",\n"))
+        complete(ex.getRequestQueue().map(ObjectsToJson.operationToJson).mkString(",\n"))
       } ~
       pathPrefix("getClients") {
         complete(ex.getClients.mkString(",\n"))
