@@ -1,51 +1,49 @@
 package ClientHandler
+import collection.mutable
 
-class ClientHandler(val name : String, val balance : Double = 0, val currencies : Map[String, Int] = Map()) {
-  def sell(currency : String, count : Int, price : Double): ClientHandler = {
-    new ClientHandler(
-      name,
-      balance + count * price,
-      currencies.map(p => {
-        if (p._1 == currency) (p._1, p._2 - count)
-        else (p._1, p._2)
-      })
-    )
+
+class ClientHandler(val name : String, var balance : Double = 0, val currencies: mutable.Map[String, Int] = mutable.Map.empty) {
+  def sell(currency : String, count : Int, price : Double)= {
+    gainBalance(count * price)
+    wasteCurrency(currency, count)
+    this
   }
-  def buy(currency : String, count : Int, price : Double) : ClientHandler = {
-    new ClientHandler(
-      name,
-      balance - count * price,
-      currencies.map(p => {
-        if (p._1 == currency) (p._1, p._2 + count)
-        else (p._1, p._2)
-      })
-    )
+  def buy(currency : String, count : Int, price : Double) = {
+    wasteBalance(count * price)
+    gainCurrency(currency, count)
+    this
   }
 
-  def addCurrency(currency : String, startCount : Int = 0) : ClientHandler = {
-    new ClientHandler(
-      name,
-      balance,
-      currencies + (currency -> startCount)
-    )
+  def filterCurrencies(newCurs :TraversableOnce[String]) = {
+    currencies ++= newCurs.filter(c => !currencies.contains(c)).map(_ -> 0)
+    currencies --= currencies.keySet -- newCurs
+    this
   }
-  def removeCurrency(currency : String, price : Double = 1.0) : ClientHandler = {
-    new ClientHandler(
-      name,
-      balance + currencies.getOrElse(currency, 0) * price,
-      currencies - currency
-    )
+  def addCurrency(currency : String, startCount : Int = 0)= {
+    currencies += currency -> startCount
+    this
   }
-
+  def removeCurrency(currency : String, price : Double = 1.0) = {
+    balance += currencies(currency) * price
+    currencies -= currency
+    this
+  }
+  def updateBalance(money : Double) =
+    balance = money
+  def updateCurrency(currency : String, count : Int) =
+    currencies(currency) = count
+  def gainBalance(money : Double) =
+    balance += money
+  def wasteBalance(money : Double) =
+    balance -= money
+  def gainCurrency(currency : String, count : Int) =
+    currencies.update(currency, currencies(currency) + count)
+  def wasteCurrency(currency : String, count : Int) =
+    currencies.update(currency, currencies(currency) - count)
   def canSpend(money : Double): Boolean = balance >= money
-  def canSell(currency: String, count : Int): Boolean = currencies.getOrElse(currency, 0) >= count
+  def canSell(currency: String, count : Int): Boolean = currencies(currency) >= count
 
-  def get(currency : String) : Int = currencies.getOrElse(currency, 0)
+  def get(currency : String) : Int = currencies(currency)
 
   override def toString: String = s"$name: $balance$$ | $currencies"
-}
-
-object ClientParser {
-  def parseLine(line : String, lineParser : String => ClientHandler) : ClientHandler = lineParser(line)
-  def parseLines(lines : List[String], lineParser : String => ClientHandler): List[ClientHandler] = lines.map(lineParser)
 }

@@ -1,16 +1,16 @@
-package Operation
-sealed abstract class Operation
+package oper
+sealed trait Operation
 
-case class EmptyOperation() extends Operation
+sealed trait QueuedOperation
+case class Purchase(name : String, currency : String, count : Int, price : Double) extends QueuedOperation
+case class Selling(name : String, currency : String, count : Int, price : Double) extends QueuedOperation
 
-case class Purchase(name : String, currency : String, count : Int, price : Double) extends Operation
-case class Selling(name : String, currency : String, count : Int, price : Double) extends Operation
-case class CurrencyRemoval(currency : String, price : Double = 1.0) extends Operation
-case class CurrencyAddition(currency : String) extends Operation
-case class ClientAddition(name : String, balance : Double) extends Operation
-case class ClientRemoval(name : String) extends Operation
+case class CurrencyAddition(currency : String, startCount : Int = 0)
+case class CurrencyRemoval(currency : String, price : Double = 0)
+
+case class ClientRemoval(name : String)
 
 object OperationParser{
-  def parseLine(line : String, lineParser: String => Operation) : Operation = lineParser(line)
-  def parseLines(lines : List[String], lineParser: String => Operation) : List[Operation] = lines.map(lineParser)
+  def parseLine(line : String, lineParser: String => QueuedOperation) : QueuedOperation = lineParser(line)
+  def parseLines(lines : List[String], lineParser: String => QueuedOperation) : List[QueuedOperation] = lines.map(lineParser)
 }

@@ -1,82 +1,96 @@
 package OrderExecutor
 
 import ClientHandler.ClientHandler
-import Operation._
+import oper._
 import com.typesafe.scalalogging.LazyLogging
+import collection.mutable
 
-
-class OrderExecutor(clients_ : Map[String, ClientHandler], reqQueue : List[Operation]) extends LazyLogging {
-  private val allCurrencies = clients_.values.flatMap(_.currencies.keys.toList).toList.distinct
-  private val clients: Map[String, ClientHandler] = clients_.map(p => {
-    val newCurs = allCurrencies.filterNot(c => p._2.currencies.contains(c))
-    (p._1, new ClientHandler(p._2.name, p._2.balance, p._2.currencies ++ newCurs.map(t => t -> 0).toMap))
+class OrderExecutor(
+                     var clients : mutable.Map[String, ClientHandler] = mutable.Map.empty,
+                     var reqQueue : mutable.ListBuffer[QueuedOperation] = mutable.ListBuffer.empty
+                   ) extends LazyLogging {
+  private var allCurrencies = clients.values.flatMap(_.currencies.keys.toList).toList.distinct.to[mutable.Set]
+  clients = clients.map(p => {
+    val c = p._2
+    c.filterCurrencies(allCurrencies)
+    (p._1, c)
   })
-  def this (clients_ : List[ClientHandler], reqQueue_ : List[Operation] = Nil) =
-    this(clients_.map(c => c.name -> c).toMap, reqQueue_)
 
   def getClient(name : String): ClientHandler = clients.getOrElse(name, throw new Exception(s"Client $name not found"))
-  def getClientDict: Map[String, ClientHandler] = clients
-  def getClients: List[ClientHandler] = clients.values.toList
-  def removeClient(name : String): OrderExecutor =
+  def removeClient(name : String) = {
     if (!clients.contains(name)) throw new Exception(s"Client $name not found")
     else {
-      new OrderExecutor(clients - name, reqQueue.filterNot {
+      reqQueue = reqQueue.filterNot {
         case Selling(name_, _, _, _) => name_ == name
         case Purchase(name_, _, _, _) => name_ == name
         case _ => false
-      })
+      }
+      clients -= name
     }
-  def addClient(client : ClientHandler): OrderExecutor = {
+  }
+  def addClient(client : ClientHandler): Unit = {
     if (client.balance < 0) throw new Exception(s"${client.name}'s balance is negative")
     else {
-      val newCurs = allCurrencies.filterNot(c => client.currencies.contains(c))
-      new OrderExecutor(new ClientHandler(client.name, client.balance, client.currencies ++ newCurs.map(t => t -> 0).toMap) :: getClients, reqQueue)
+      if (clients.contains(client.name)) throw new Exception(s"${client.name} is already in")
+      else {
+        allCurrencies ++= client.currencies.keys
+        clients += client.name -> client.filterCurrencies(allCurrencies)
+      }
     }
   }
 
-  def getCurrencies: List[String] = allCurrencies
+  def getCurrencies: List[String] = allCurrencies.toList
+  def getClientDict = clients
+  def getClients: List[ClientHandler] = clients.values.toList
+  def getRequestQueue = reqQueue
 
-  def request(operation : Operation): OrderExecutor = {
+  def request(operation : QueuedOperation): Unit = {
     operation match {
       case Purchase(name, currency, count, price) => handlePurchase(name, currency, count, price)
       case Selling(name, currency, count, price) => handleSelling(name, currency, count, price)
-      case CurrencyAddition(currency) => addCurrency(currency)
-      case CurrencyRemoval(currency, price) => removeCurrency(currency, price)
-      case ClientAddition(name, balance) => addClient(new ClientHandler(name, balance))
-      case ClientRemoval(name) => removeClient(name)
-      case EmptyOperation() => this
     }
   }
 
-  def addCurrency(currency : String, startCount : Int = 0): OrderExecutor = {
+  def updateClientBalance(client : String, balance : Double) =
+    clients(client).updateBalance(balance)
+  def addClientBalance(client : String, toAdd : Double) =
+    clients(client).gainBalance(toAdd)
+
+  def updateClientCurrency(client: String, currency : String, count : Int) =
+    clients(client).updateCurrency(currency, count)
+  def addClientCurrency(client : String, currency : String, toAdd : Int) =
+    clients(client).gainCurrency(currency, toAdd)
+
+  def addCurrency(currency : String, startCount : Int = 0): Unit = {
     if (allCurrencies.contains(currency)) throw new Exception(s"Currency $currency already involved")
     else {
-      new OrderExecutor(
-        clients.map(c => c._1 -> c._2.addCurrency(currency, startCount)),
-        reqQueue
-      )
+      allCurrencies += currency
+      clients = clients.map(p => p._1 -> p._2.addCurrency(currency, startCount))
     }
   }
-  def removeCurrency(currency : String, price : Double) : OrderExecutor = {
+  def removeCurrency(currency : String, price : Double) : Unit = {
     if (!allCurrencies.contains(currency)) throw new Exception(s"Currency $currency not found")
     else {
-      new OrderExecutor(
-        clients.map(c => c._1 -> c._2.removeCurrency(currency, price)),
-        reqQueue
-      )
+      allCurrencies -= currency
+      clients = clients.map(p => p._1 -> p._2.removeCurrency(currency, price))
+      reqQueue = reqQueue.filterNot({
+        case c: Selling => c.currency == currency
+        case c: Purchase => c.currency == currency
+        case _ => false
+      })
     }
   }
 
-  def handlePurchase(name : String, currency : String, count : Int, price : Double):OrderExecutor = {
-    if (!getClient(name).canSpend(count * price)) this
+  def handlePurchase(name : String, currency : String, count : Int, price : Double):Unit = {
+    if (!getClient(name).canSpend(count * price)) ()
     else {
-      val sellRequests = reqQueue.filter((p : Operation) => {
+      val sellRequests = reqQueue.filter((p : QueuedOperation) => {
         p match {
           case c : Selling => c.currency == currency && c.count <= count && c.price == price
           case _ => false
         }
       }) // List of opposite operations
-      val sellPair = sellRequests.foldLeft((List[Selling](), 0))((res : (List[Selling], Int), op : Operation) => {
+      val sellPair = sellRequests.foldLeft((List[Selling](), 0))((res : (List[Selling], Int), op : QueuedOperation) => {
         op match {
           case p : Selling =>
             if (res._2 + p.count <= count && p.name != name && getClient(p.name).canSell(p.currency, p.count))
@@ -94,33 +108,30 @@ class OrderExecutor(clients_ : Map[String, ClientHandler], reqQueue : List[Opera
         }
       }) // Queue without fulfilled requests and requests leading to negative currency/dollar balance
       if (sellPair._1.isEmpty) {
-        new OrderExecutor(
-          clients,
-          reqQueue :+ Purchase(name, currency, count, price)
-        )
+        reqQueue += Purchase(name, currency, count, price)
       } // If noone who could sell the currency is found
       else {
-        val newClients = clients.map(c => {
+        clients = clients.map(c => {
           val toSell = sellPair._1.filter(_.name == c._1).map(_.count).sum
           if (c._1 == name)
-            c._2.buy(currency, sellPair._2, price)
+            c._1 -> c._2.buy(currency, sellPair._2, price)
           else
-            c._2.sell(currency, toSell, price)
-        }).toList
-        new OrderExecutor(newClients, newQueue)
+            c._1 -> c._2.sell(currency, toSell, price)
+        })
+        reqQueue = newQueue
       }
     }
   }
-  def handleSelling(name: String, currency: String, count: Int, price: Double): OrderExecutor = {
-    if (!getClient(name).canSell(currency, count)) this
+  def handleSelling(name: String, currency: String, count: Int, price: Double): Unit = {
+    if (!getClient(name).canSell(currency, count)) ()
     else {
-      val buyRequests = reqQueue.filter((p : Operation) => {
+      val buyRequests = reqQueue.filter((p : QueuedOperation) => {
         p match {
           case c : Purchase => c.currency == currency && c.count <= count && c.price == price
           case _ => false
         }
       }) // List of opposite operations
-      val buyPair = buyRequests.foldLeft((List[Purchase](), 0))((res : (List[Purchase], Int), op : Operation) => {
+      val buyPair = buyRequests.foldLeft((List[Purchase](), 0))((res : (List[Purchase], Int), op : QueuedOperation) => {
         op match {
           case p : Purchase =>
             if (res._2 + p.count <= count && p.name != name && getClient(p.name).canSpend(p.count * p.price))
@@ -138,22 +149,18 @@ class OrderExecutor(clients_ : Map[String, ClientHandler], reqQueue : List[Opera
         }
       })
       if (buyPair._1.isEmpty) {
-        new OrderExecutor(
-          clients,
-          reqQueue :+ Selling(name, currency, count, price)
-        )
+        reqQueue += Selling(name, currency, count, price)
       } // If noone who could sell the currency is found
       else {
-        val newClients = clients.map(c => {
+        clients = clients.map(c => {
           val toBuy = buyPair._1.filter(p => p.name == c._1).map(_.count).sum
           if (c._1 == name)
-            c._2.sell(currency, buyPair._2, price)
+            c._1 -> c._2.sell(currency, buyPair._2, price)
           else
-            c._2.buy(currency, toBuy, price)
-        }).toList
-        new OrderExecutor(newClients, newQueue)
+            c._1 -> c._2.buy(currency, toBuy, price)
+        })
+        reqQueue = newQueue
       }
     }
   }
-  def getRequestQueue(): List[Operation] = reqQueue
 }
