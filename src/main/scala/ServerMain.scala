@@ -26,10 +26,10 @@ object FinalResponse {
     val resp = Await.result(RespString, Duration(100, MILLISECONDS))
     Try(parse(resp).extract[Map[String, Any]])
   }
-  def applyMethodWithResponse(req : HttpMessage, method : Map[String, Any] => StandardRoute)(implicit mat:Materializer, formats : DefaultFormats): StandardRoute = {
+  def applyMethodWithResponse(req : HttpMessage, respMethod : Map[String, Any] => StandardRoute)(implicit mat:Materializer, formats : DefaultFormats): StandardRoute = {
     mapFromReq(req) match {
       case Success(m) =>
-        method(m)
+        respMethod(m)
       case Failure(exc) =>
         complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
     }
@@ -93,6 +93,26 @@ object StockRouter {
           applyMethodWithResponse(req, PostToResponse.removeCurrency)
         }
     }
+  def changeClientBalance(implicit mat:Materializer, formats : DefaultFormats, ex : OrderExecutor) =
+    pathPrefix("changeClientBalance") {
+      formFieldMap { m =>
+        PostToResponse.changeClientBalance(m)
+      } ~
+        extractRequest { req =>
+          applyMethodWithResponse(req, PostToResponse.changeClientBalance)
+        }
+    }
+  def changeClientCurrency(implicit mat:Materializer, formats : DefaultFormats, ex : OrderExecutor) =
+    pathPrefix("changeClientCurrency") {
+      formFieldMap { m =>
+        PostToResponse.changeClientCurrency(m)
+      } ~
+        extractRequest { req =>
+          applyMethodWithResponse(req, PostToResponse.changeClientCurrency)
+        }
+    }
+  def verifyOperationLowering(implicit ex : OrderExecutor) =
+    PostToResponse.verifyOperationLowering
   def post(implicit mat:Materializer, formats : DefaultFormats, ex : OrderExecutor) =
     postWrapper {
       addClient ~
@@ -100,7 +120,10 @@ object StockRouter {
         buy ~
         sell ~
         addCurrency ~
-        removeCurrency
+        removeCurrency ~
+        changeClientBalance ~
+        changeClientCurrency ~
+        verifyOperationLowering
     }
 
   def getClient(implicit ex : OrderExecutor) =
@@ -138,7 +161,6 @@ object ServerMain extends App{
   val route: Route =
     StockRouter.post ~ StockRouter.get
   /*ToDo:
-    Add Client updating
     Add requesting the permission to lower the price of selling/ increase the price of purchase
   */
   val bindingFuture = Http().bindAndHandle(route, "localhost", 8080)

@@ -9,14 +9,18 @@ import serializer.ObjectsToJson
 import scala.util.{Failure, Success, Try}
 
 object PostToResponse {
-  def success() =
-    complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success()))
+  def success(message : Any) ={
+    message match {
+      case s: String => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success(Some(s))))
+      case _ => complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.success()))
+    }
+  }
   def error(exc : Throwable) =
     complete(HttpEntity(ContentTypes.`application/json`, ObjectsToJson.error(exc)))
   private def toComplete[T](t : Try[T]) = {
     t match {
-      case Success(_) =>
-        success()
+      case Success(m) =>
+        success(m)
       case Failure(exc) =>
         error(exc)
     }
@@ -24,17 +28,21 @@ object PostToResponse {
 
   def buy(m : Map[String, Any])(implicit ex : OrderExecutor) = {
     val buyTry = RequestParser.tryToPurchase(m).flatMap(s =>
-      Try(
+      Try({
         ex.request(s)
-      )
+        if (ex.justLowered) "Use the verifyOperationLowering operation to do that one thing"
+        else ()
+      })
     )
     toComplete(buyTry)
   }
   def sell(m : Map[String, Any])(implicit ex : OrderExecutor) = {
     val sellTry = RequestParser.tryToSelling(m).flatMap(s =>
-      Try(
+      Try({
         ex.request(s)
-      )
+        if (ex.justLowered) "Use the verifyOperationLowering operation to do that one thing"
+        else ()
+      })
     )
     toComplete(sellTry)
   }
@@ -69,5 +77,27 @@ object PostToResponse {
       )
     )
     toComplete(removeCurrencyTry)
+  }
+  def changeClientBalance(m : Map[String, Any])(implicit ex : OrderExecutor) = {
+    val changingClientBalanceTry = RequestParser.tryToChangingClientBalance(m).flatMap(ch =>
+      Try(
+        ex.updateClientBalance(ch.name, ch.balance)
+      )
+    )
+    toComplete(changingClientBalanceTry)
+  }
+  def changeClientCurrency(m : Map[String, Any])(implicit ex : OrderExecutor) = {
+    val changingClientCurrencyTry = RequestParser.tryToChangingClientCurrency(m).flatMap(ch =>
+      Try(
+        ex.updateClientCurrency(ch.name, ch.currency, ch.count)
+      )
+    )
+    toComplete(changingClientCurrencyTry)
+  }
+  def verifyOperationLowering(implicit ex : OrderExecutor) = {
+    val acceptOperationLoweringTry = Try(
+      ex.acceptOperationLowering()
+    )
+    toComplete(acceptOperationLoweringTry)
   }
 }

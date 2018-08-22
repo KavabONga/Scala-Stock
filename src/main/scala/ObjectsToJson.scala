@@ -13,7 +13,7 @@ object ObjectsToJson {
     if (comment.isEmpty)
       pretty(render("success" -> true))
     else
-      pretty(render("success" -> true + "comment" -> comment))
+      pretty(render(("success" -> true) ~ ("comment" -> comment)))
   }
   private def packClient(client : ClientHandler) = {
     val currenciesStr = client.currencies.mapValues(_.toString).toList

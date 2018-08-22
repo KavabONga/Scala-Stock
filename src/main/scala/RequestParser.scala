@@ -59,4 +59,21 @@ object RequestParser {
       )
     )
   }
+  def tryToChangingClientBalance(m : Map[String, Any]) : Try[ChangingClientBalance] = {
+    Try (
+      ChangingClientBalance(
+        m("name").toString,
+        m("balance").toString.toDouble
+      )
+    )
+  }
+  def tryToChangingClientCurrency(m : Map[String, Any]) : Try[ChangingClientCurrency] = {
+    Try (
+      ChangingClientCurrency(
+        m("name").toString,
+        m("currency").toString,
+        m("count").toString.toInt
+      )
+    )
+  }
 }

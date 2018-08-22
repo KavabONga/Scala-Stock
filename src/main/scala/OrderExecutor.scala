@@ -3,7 +3,11 @@ package OrderExecutor
 import ClientHandler.ClientHandler
 import oper._
 import com.typesafe.scalalogging.LazyLogging
+
 import collection.mutable
+import scala.collection.mutable.ListBuffer
+
+case class MemoryPair(toPush : QueuedOperation, alt : QueuedOperation)
 
 class OrderExecutor(
                      var clients : mutable.Map[String, ClientHandler] = mutable.Map.empty,
@@ -15,6 +19,43 @@ class OrderExecutor(
     c.filterCurrencies(allCurrencies)
     (p._1, c)
   })
+  private var memory = Option.empty[MemoryPair]
+  private def memorize(toPush : QueuedOperation, alt : QueuedOperation) =
+    memory = Some(MemoryPair(toPush, alt))
+  private def dropMemory() = {
+    if (memory.isDefined) {
+      reqQueue += memory.get.toPush
+      memory = Option.empty[MemoryPair]
+    }
+    else ()
+  }
+  private def useMemory() = {
+    val operFirst = memory.get.toPush
+    val operAlt = memory.get.alt
+    reqQueue = reqQueue.foldLeft((List[QueuedOperation](), false)) { (p, op) =>
+      if (op == memory.get.alt && !p._2) (p._1, true)
+      else (p._1 :+ op, p._2)
+    }._1.to[ListBuffer]
+    operFirst match {
+      case c : Selling => {
+        clients(operFirst.name).sell(operFirst.currency, operFirst.count, operAlt.price)
+        clients(operAlt.name).buy(operAlt.currency, operAlt.count, operAlt.price)
+      }
+      case c : Purchase => {
+        clients(operFirst.name).buy(operFirst.currency, operFirst.count, operAlt.price)
+        clients(operAlt.name).sell(operAlt.currency, operAlt.count, operAlt.price)
+      }
+    }
+    ()
+  }
+  def justLowered: Boolean =
+    memory.isDefined
+
+  def acceptOperationLowering() = {
+    if (memory.isDefined)
+      useMemory()
+    else throw new Exception("Nothing to verify")
+  }
 
   def getClient(name : String): ClientHandler = clients.getOrElse(name, throw new Exception(s"Client $name not found"))
   def removeClient(name : String) = {
@@ -34,6 +75,7 @@ class OrderExecutor(
       if (clients.contains(client.name)) throw new Exception(s"${client.name} is already in")
       else {
         allCurrencies ++= client.currencies.keys
+        clients = mutable.Map.empty ++ clients.mapValues(c => c.filterCurrencies(allCurrencies))
         clients += client.name -> client.filterCurrencies(allCurrencies)
       }
     }
@@ -81,15 +123,61 @@ class OrderExecutor(
     }
   }
 
+  private def oppositeQueuedOperations(op : QueuedOperation) = {
+    op match {
+      case Selling(name, currency, count, price) => {
+        reqQueue.filter((p : QueuedOperation) => {
+          p match {
+            case c : Purchase => c.currency == currency && c.price == price && c.name != name
+            case _ => false
+          }
+        })
+      }
+      case Purchase(name, currency, count, price) => {
+        reqQueue.filter((p : QueuedOperation) => {
+          p match {
+            case c : Selling => c.currency == currency && c.price == price && c.name != name
+            case _ => false
+          }
+        })
+      }
+    }
+  }
+  private def singlePossibleOpposite(op : QueuedOperation) = {
+    op match {
+      case p : Selling => {
+        val pos = reqQueue.filter(posOp => {
+          posOp match {
+            case posP : Purchase => posP.count == op.count && posP.currency == op.currency && posP.price <= p.price
+            case _ => false
+          }
+        })
+        if (pos.isEmpty)
+          Option.empty[QueuedOperation]
+        else
+          Option(pos.head)
+      }
+      case p : Purchase => {
+        val pos = reqQueue.filter(posOp => {
+          posOp match {
+            case posP : Selling => posP.count == op.count && posP.currency == op.currency && posP.price >= p.price
+            case _ => false
+          }
+        })
+        if (pos.isEmpty)
+          Option.empty[QueuedOperation]
+        else
+          Option(pos.head)
+      }
+    }
+  }
+
   def handlePurchase(name : String, currency : String, count : Int, price : Double):Unit = {
+    dropMemory()
     if (!getClient(name).canSpend(count * price)) ()
     else {
-      val sellRequests = reqQueue.filter((p : QueuedOperation) => {
-        p match {
-          case c : Selling => c.currency == currency && c.count <= count && c.price == price
-          case _ => false
-        }
-      }) // List of opposite operations
+      val toPush = Purchase(name, currency, count, price)
+      val sellRequests = oppositeQueuedOperations(toPush) // List of opposite operations
       val sellPair = sellRequests.foldLeft((List[Selling](), 0))((res : (List[Selling], Int), op : QueuedOperation) => {
         op match {
           case p : Selling =>
@@ -108,7 +196,12 @@ class OrderExecutor(
         }
       }) // Queue without fulfilled requests and requests leading to negative currency/dollar balance
       if (sellPair._1.isEmpty) {
-        reqQueue += Purchase(name, currency, count, price)
+        val pos = singlePossibleOpposite(toPush)
+        if (pos.isEmpty)
+          reqQueue += toPush
+        else {
+          memorize(toPush, pos.get)
+        }
       } // If noone who could sell the currency is found
       else {
         clients = clients.map(c => {
@@ -123,14 +216,11 @@ class OrderExecutor(
     }
   }
   def handleSelling(name: String, currency: String, count: Int, price: Double): Unit = {
+    dropMemory()
     if (!getClient(name).canSell(currency, count)) ()
     else {
-      val buyRequests = reqQueue.filter((p : QueuedOperation) => {
-        p match {
-          case c : Purchase => c.currency == currency && c.count <= count && c.price == price
-          case _ => false
-        }
-      }) // List of opposite operations
+      val toPush = Selling(name, currency, count, price)
+      val buyRequests = oppositeQueuedOperations(toPush) // List of opposite operations
       val buyPair = buyRequests.foldLeft((List[Purchase](), 0))((res : (List[Purchase], Int), op : QueuedOperation) => {
         op match {
           case p : Purchase =>
@@ -149,7 +239,11 @@ class OrderExecutor(
         }
       })
       if (buyPair._1.isEmpty) {
-        reqQueue += Selling(name, currency, count, price)
+        val pos = singlePossibleOpposite(toPush)
+        if (pos.isEmpty)
+          reqQueue += toPush
+        else
+          memorize(toPush, pos.get)
       } // If noone who could sell the currency is found
       else {
         clients = clients.map(c => {
