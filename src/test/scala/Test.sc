@@ -1,4 +1,6 @@
-val a = List(1, 2, 3)
-for (
-  c <- a
-) yield c + 2
+import concurrent.Future
+import concurrent.ExecutionContext.Implicits.global
+import scala.util._
+Future(1) onComplete {
+  _ => println(1)
+}

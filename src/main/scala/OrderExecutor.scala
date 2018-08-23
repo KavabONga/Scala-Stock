@@ -1,13 +1,36 @@
 package OrderExecutor
 
 import ClientHandler.ClientHandler
+import StockDB.StockDBRunner
 import oper._
 import com.typesafe.scalalogging.LazyLogging
+import slick.jdbc.SQLiteProfile.api._
 
+import concurrent._
+import concurrent.ExecutionContext.Implicits.global
+import concurrent.duration._
 import collection.mutable
 import scala.collection.mutable.ListBuffer
 
 case class MemoryPair(toPush : QueuedOperation, alt : QueuedOperation)
+// ToDo: add Database querying to all data-changing methods
+object OrderExecutor {
+  def fromDatabase(implicit db : Database) = {
+    val args = Await.result(Future.sequence(List(StockDBRunner.getClients, StockDBRunner.getOperationRequests)), 2 seconds)
+    val clients = args(0) match {
+      case l : Iterable[ClientHandler] => l
+      case _ => throw new Exception
+    }
+    val requests = args(1) match {
+      case l : Iterable[QueuedOperation] => l
+      case _ => throw new Exception
+    }
+    new OrderExecutor(
+      clients,
+      requests
+    )
+  }
+}
 
 class OrderExecutor(
                      var clients : mutable.Map[String, ClientHandler] = mutable.Map.empty,
@@ -25,7 +48,6 @@ class OrderExecutor(
       mutable.Map.empty ++ cl.map(c => c.name -> c).toMap,
       reqs.to[mutable.ListBuffer]
     )
-
   private var memory = Option.empty[MemoryPair]
   private def memorize(toPush : QueuedOperation, alt : QueuedOperation) =
     memory = Some(MemoryPair(toPush, alt))
