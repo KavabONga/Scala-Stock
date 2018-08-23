@@ -50,13 +50,13 @@ object StockTables {
 object StockDBMethods {
   import StockTables._
   def clearClientsReq() = {
-    clients.schema.drop >> clients.schema.create
+    clients.delete
   }
   def clearClientsToCurrenciesReq() = {
-    clientsToCurrencies.schema.drop >> clientsToCurrencies.schema.create
+    clientsToCurrencies.delete
   }
   def clearOperationRequestsReq() = {
-    operationRequests.schema.drop >> operationRequests.schema.create
+    operationRequests.delete
   }
   def clearTablesReq() = {
     clearClientsReq() >> clearClientsToCurrenciesReq() >> clearOperationRequestsReq()
@@ -178,5 +178,4 @@ object DBMain extends App with LazyLogging{
     "jdbc:sqlite:C:\\Users\\mitya\\Documents\\Git_workspace\\Scala-Stock\\src\\main\\resources\\test.db",
     driver = "org.sqlite.JDBC"
   )
-  clearTables
 }
