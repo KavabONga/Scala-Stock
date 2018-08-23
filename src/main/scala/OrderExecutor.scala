@@ -19,6 +19,13 @@ class OrderExecutor(
     c.filterCurrencies(allCurrencies)
     (p._1, c)
   })
+
+  def this(cl : Iterable[ClientHandler], reqs : Iterable[QueuedOperation]) =
+    this(
+      mutable.Map.empty ++ cl.map(c => c.name -> c).toMap,
+      reqs.to[mutable.ListBuffer]
+    )
+
   private var memory = Option.empty[MemoryPair]
   private def memorize(toPush : QueuedOperation, alt : QueuedOperation) =
     memory = Some(MemoryPair(toPush, alt))
