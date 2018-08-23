@@ -10,6 +10,8 @@ import akka.http.scaladsl.server.Directives._
 import akka.stream.{ActorMaterializer, Materializer}
 import org.json4s.DefaultFormats
 
+import slick.jdbc.SQLiteProfile.api._
+
 import scala.util._
 import OrderExecutor.OrderExecutor
 import akka.http.scaladsl.unmarshalling.Unmarshal
@@ -157,7 +159,11 @@ object ServerMain extends App{
   implicit val system = ActorSystem("my-system")
   implicit val materializer = ActorMaterializer()
   implicit val executionContext = system.dispatcher
-  implicit val ex = new OrderExecutor()
+  implicit val db = Database.forURL(
+    "jdbc:sqlite:C:\\Users\\mitya\\Documents\\Git_workspace\\Scala-Stock\\src\\main\\resources\\test.db",
+    driver = "org.sqlite.JDBC"
+  )
+  implicit val ex = OrderExecutor.fromDatabase()
   val route: Route =
     StockRouter.post ~ StockRouter.get
   /*ToDo:

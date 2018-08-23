@@ -3,6 +3,7 @@ package StockDB
 import ClientHandler.ClientHandler
 import com.typesafe.scalalogging.LazyLogging
 import oper._
+import slick.dbio.DBIOAction
 
 import scala.concurrent.Future
 import scala.concurrent.Future._
@@ -46,7 +47,7 @@ object StockTables {
   val operationRequests = TableQuery[OperationRequests]
 }
 
-object StockDBRunner {
+object StockDBMethods {
   import StockTables._
   def clearClientsReq() = {
     clients.schema.drop >> clients.schema.create
@@ -110,7 +111,7 @@ object StockDBRunner {
       Future.sequence(l.map(s => getClient(s)).toList)
     }).flatten
   }
-  def addCurrency(currency : String, startCount : Int)(implicit db : Database) = {
+  def addCurrency(currency : String, startCount : Int = 0)(implicit db : Database) = {
     val namesReq = for (
       client <- clients
     ) yield client.name
@@ -118,10 +119,12 @@ object StockDBRunner {
       db.run(clientsToCurrencies ++= l.map(s => (s, currency, startCount)))
     }).flatten
   }
-
+  def removeCurrency(currency : String)(implicit db : Database) = {
+    db.run(clientsToCurrencies.filter(_.currencyName === currency).delete)
+  }
   def getLatestTimeIndReq =
     operationRequests.sortBy(_.timeIndex.desc).result.headOption.map(c => c.map(_._2).getOrElse(0))
-  def addOperationRequestReq(op : QueuedOperation)(implicit db : Database) = {
+  def addOperationRequest(op : QueuedOperation)(implicit db : Database) = {
     db.run(getLatestTimeIndReq).map(t => {
       op match {
         case p : Selling => db.run(operationRequests += ("sell", t + 1, op.name, op.currency, op.count, op.price))
@@ -137,12 +140,43 @@ object StockDBRunner {
       }
     }).toList))
   }
+  def rewriteOperationRequests(l : Iterable[QueuedOperation])(implicit db: Database) = {
+    db.run(operationRequests.delete) transformWith { _ =>
+      val futures = l.foldLeft((List[Future[Any]](),0))((pair, op) => {
+        op match {
+          case p : Selling =>
+            (
+              pair._1 :+ db.run(operationRequests += ("sell", pair._2, op.name, op.currency, op.count, op.price)),
+              pair._2 + 1
+            )
+          case p : Purchase =>
+            (
+              pair._1 :+ db.run(operationRequests += ("buy", pair._2, op.name, op.currency, op.count, op.price)),
+              pair._2 + 1
+            )
+        }
+      })._1
+      Future.sequence(futures)
+    }
+  }
+  def rewriteClients(l : Iterable[ClientHandler])(implicit db : Database) = {
+    db.run(operationRequests.delete) transformWith { _ =>
+      Future.sequence(l.map(c => addClient(c)))
+    }
+  }
+  def changeClientBalance(name : String, balance : Double)(implicit db: Database) = {
+    db.run(clients.filter(_.name===name).map(_.balance).update(balance))
+  }
+  def changeClientCurrency(name: String, currency : String, count : Int)(implicit db : Database) = {
+    db.run(clientsToCurrencies.filter(c => c.clientName === name && c.currencyName === currency).map(_.currencyCount).update(count))
+  }
 }
 
 object DBMain extends App with LazyLogging{
-  import StockDBRunner._
+  import StockDBMethods._
   implicit val db = Database.forURL(
     "jdbc:sqlite:C:\\Users\\mitya\\Documents\\Git_workspace\\Scala-Stock\\src\\main\\resources\\test.db",
     driver = "org.sqlite.JDBC"
   )
+  clearTables
 }

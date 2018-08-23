@@ -1,7 +1,7 @@
 package OrderExecutor
 
 import ClientHandler.ClientHandler
-import StockDB.StockDBRunner
+import StockDB.StockDBMethods
 import oper._
 import com.typesafe.scalalogging.LazyLogging
 import slick.jdbc.SQLiteProfile.api._
@@ -15,8 +15,8 @@ import scala.collection.mutable.ListBuffer
 case class MemoryPair(toPush : QueuedOperation, alt : QueuedOperation)
 // ToDo: add Database querying to all data-changing methods
 object OrderExecutor {
-  def fromDatabase(implicit db : Database) = {
-    val args = Await.result(Future.sequence(List(StockDBRunner.getClients, StockDBRunner.getOperationRequests)), 2 seconds)
+  def fromDatabase()(implicit db : Database) = {
+    val args = Await.result(Future.sequence(List(StockDBMethods.getClients, StockDBMethods.getOperationRequests)), 2 seconds)
     val clients = args(0) match {
       case l : Iterable[ClientHandler] => l
       case _ => throw new Exception
@@ -35,7 +35,7 @@ object OrderExecutor {
 class OrderExecutor(
                      var clients : mutable.Map[String, ClientHandler] = mutable.Map.empty,
                      var reqQueue : mutable.ListBuffer[QueuedOperation] = mutable.ListBuffer.empty
-                   ) extends LazyLogging {
+                   )(implicit db : Database) extends LazyLogging {
   private var allCurrencies = clients.values.flatMap(_.currencies.keys.toList).toList.distinct.to[mutable.Set]
   clients = clients.map(p => {
     val c = p._2
@@ -43,7 +43,7 @@ class OrderExecutor(
     (p._1, c)
   })
 
-  def this(cl : Iterable[ClientHandler], reqs : Iterable[QueuedOperation]) =
+  def this(cl : Iterable[ClientHandler], reqs : Iterable[QueuedOperation])(implicit db:Database) =
     this(
       mutable.Map.empty ++ cl.map(c => c.name -> c).toMap,
       reqs.to[mutable.ListBuffer]
@@ -54,6 +54,7 @@ class OrderExecutor(
   private def dropMemory() = {
     if (memory.isDefined) {
       reqQueue += memory.get.toPush
+      StockDBMethods.addOperationRequest(memory.get.toPush)
       memory = Option.empty[MemoryPair]
     }
     else ()
@@ -65,6 +66,7 @@ class OrderExecutor(
       if (op == memory.get.alt && !p._2) (p._1, true)
       else (p._1 :+ op, p._2)
     }._1.to[ListBuffer]
+    StockDBMethods.rewriteOperationRequests(reqQueue)
     operFirst match {
       case c : Selling => {
         clients(operFirst.name).sell(operFirst.currency, operFirst.count, operAlt.price)
@@ -95,7 +97,9 @@ class OrderExecutor(
         case Purchase(name_, _, _, _) => name_ == name
         case _ => false
       }
+      StockDBMethods.rewriteOperationRequests(reqQueue)
       clients -= name
+      StockDBMethods.removeClient(name)
     }
   }
   def addClient(client : ClientHandler): Unit = {
@@ -103,9 +107,11 @@ class OrderExecutor(
     else {
       if (clients.contains(client.name)) throw new Exception(s"${client.name} is already in")
       else {
+        (client.currencies.keys.toSet -- allCurrencies).foreach(s => StockDBMethods.addCurrency(s))
         allCurrencies ++= client.currencies.keys
         clients = mutable.Map.empty ++ clients.mapValues(c => c.filterCurrencies(allCurrencies))
         clients += client.name -> client.filterCurrencies(allCurrencies)
+        StockDBMethods.addClient(client.filterCurrencies(allCurrencies))
       }
     }
   }
@@ -122,33 +128,43 @@ class OrderExecutor(
     }
   }
 
-  def updateClientBalance(client : String, balance : Double) =
-    clients(client).updateBalance(balance)
-  def addClientBalance(client : String, toAdd : Double) =
-    clients(client).gainBalance(toAdd)
+  def updateClientBalance(name : String, balance : Double): Unit = {
+    clients(name).updateBalance(balance)
+    StockDBMethods.changeClientBalance(name, balance)
+  }
+  def addClientBalance(name : String, toAdd : Double): Unit = {
+    clients(name).gainBalance(toAdd)
+    StockDBMethods.changeClientBalance(name, clients(name).balance)
+  }
 
-  def updateClientCurrency(client: String, currency : String, count : Int) =
-    clients(client).updateCurrency(currency, count)
-  def addClientCurrency(client : String, currency : String, toAdd : Int) =
-    clients(client).gainCurrency(currency, toAdd)
-
+  def updateClientCurrency(name: String, currency : String, count : Int): Unit = {
+    clients(name).updateCurrency(currency, count)
+    StockDBMethods.changeClientCurrency(name, currency, count)
+  }
+  def addClientCurrency(name : String, currency : String, toAdd : Int):Unit = {
+    clients(name).gainCurrency(currency, toAdd)
+    StockDBMethods.changeClientCurrency(name, currency, clients(name).get(currency))
+  }
   def addCurrency(currency : String, startCount : Int = 0): Unit = {
     if (allCurrencies.contains(currency)) throw new Exception(s"Currency $currency already involved")
     else {
       allCurrencies += currency
       clients = clients.map(p => p._1 -> p._2.addCurrency(currency, startCount))
+      StockDBMethods.addCurrency(currency, startCount)
     }
   }
   def removeCurrency(currency : String, price : Double) : Unit = {
     if (!allCurrencies.contains(currency)) throw new Exception(s"Currency $currency not found")
     else {
       allCurrencies -= currency
-      clients = clients.map(p => p._1 -> p._2.removeCurrency(currency, price))
       reqQueue = reqQueue.filterNot({
         case c: Selling => c.currency == currency
         case c: Purchase => c.currency == currency
         case _ => false
       })
+      StockDBMethods.rewriteOperationRequests(reqQueue)
+      clients = clients.map(p => p._1 -> p._2.removeCurrency(currency, price))
+      StockDBMethods.removeCurrency(currency)
     }
   }
 
@@ -226,8 +242,10 @@ class OrderExecutor(
       }) // Queue without fulfilled requests and requests leading to negative currency/dollar balance
       if (sellPair._1.isEmpty) {
         val pos = singlePossibleOpposite(toPush)
-        if (pos.isEmpty)
+        if (pos.isEmpty) {
           reqQueue += toPush
+          StockDBMethods.addOperationRequest(toPush)
+        }
         else {
           memorize(toPush, pos.get)
         }
@@ -240,7 +258,9 @@ class OrderExecutor(
           else
             c._1 -> c._2.sell(currency, toSell, price)
         })
+        StockDBMethods.rewriteClients(clients.values)
         reqQueue = newQueue
+        StockDBMethods.rewriteOperationRequests(reqQueue)
       }
     }
   }
@@ -269,8 +289,10 @@ class OrderExecutor(
       })
       if (buyPair._1.isEmpty) {
         val pos = singlePossibleOpposite(toPush)
-        if (pos.isEmpty)
+        if (pos.isEmpty) {
           reqQueue += toPush
+          StockDBMethods.addOperationRequest(toPush)
+        }
         else
           memorize(toPush, pos.get)
       } // If noone who could sell the currency is found
@@ -282,7 +304,9 @@ class OrderExecutor(
           else
             c._1 -> c._2.buy(currency, toBuy, price)
         })
+        StockDBMethods.rewriteClients(clients.values)
         reqQueue = newQueue
+        StockDBMethods.rewriteOperationRequests(reqQueue)
       }
     }
   }
